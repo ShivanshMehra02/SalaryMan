@@ -7,8 +7,6 @@ export default class WebRTC {
   private myPeer: Peer
   private peers = new Map<string, { call: Peer.MediaConnection; video: HTMLVideoElement }>()
   private onCalledPeers = new Map<string, { call: Peer.MediaConnection; video: HTMLVideoElement }>()
-  private videoGrid = document.querySelector('.video-grid')
-  private buttonGrid = document.querySelector('.button-grid')
   private myVideo = document.createElement('video')
   private myStream?: MediaStream
   private network: Network
@@ -27,6 +25,7 @@ export default class WebRTC {
     // mute your own video stream (you don't want to hear yourself)
     this.myVideo.muted = true
     this.myVideo.autoplay = true
+    this.myVideo.playsInline = true
 
     // config peerJS
     this.initialize()
@@ -38,12 +37,21 @@ export default class WebRTC {
     return userId.replace(/[^0-9a-z]/gi, 'G')
   }
 
+  private getVideoGrid() {
+    return document.querySelector('.video-grid')
+  }
+
+  private getButtonGrid() {
+    return document.querySelector('.button-grid')
+  }
+
   initialize() {
     this.myPeer.on('call', (call) => {
       if (!this.onCalledPeers.has(call.peer)) {
         call.answer(this.myStream)
         const video = document.createElement('video')
         video.autoplay = true
+        video.playsInline = true
         this.onCalledPeers.set(call.peer, { call, video })
 
         call.on('stream', (userVideoStream) => {
@@ -90,6 +98,7 @@ export default class WebRTC {
         const call = this.myPeer.call(sanitizedId, this.myStream)
         const video = document.createElement('video')
         video.autoplay = true
+        video.playsInline = true
         this.peers.set(sanitizedId, { call, video })
 
         call.on('stream', (userVideoStream) => {
@@ -109,7 +118,8 @@ export default class WebRTC {
     video.addEventListener('loadedmetadata', () => {
       video.play()
     })
-    if (this.videoGrid) this.videoGrid.append(video)
+    const videoGrid = this.getVideoGrid()
+    if (videoGrid) videoGrid.append(video)
   }
 
   // method to remove video stream (when we are the host of the call)
@@ -154,17 +164,20 @@ export default class WebRTC {
     videoButton.innerText = 'Video off'
     videoButton.addEventListener('click', () => {
       if (this.myStream) {
-        const audioTrack = this.myStream.getVideoTracks()[0]
-        if (audioTrack.enabled) {
-          audioTrack.enabled = false
+        const videoTrack = this.myStream.getVideoTracks()[0]
+        if (videoTrack.enabled) {
+          videoTrack.enabled = false
           videoButton.innerText = 'Video on'
         } else {
-          audioTrack.enabled = true
+          videoTrack.enabled = true
           videoButton.innerText = 'Video off'
         }
       }
     })
-    this.buttonGrid?.append(audioButton)
-    this.buttonGrid?.append(videoButton)
+    const buttonGrid = this.getButtonGrid()
+    if (buttonGrid) {
+      buttonGrid.append(audioButton)
+      buttonGrid.append(videoButton)
+    }
   }
 }

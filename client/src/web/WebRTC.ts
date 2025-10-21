@@ -7,29 +7,34 @@ export default class WebRTC {
   private myPeer: Peer
   private peers = new Map<string, { call: Peer.MediaConnection; video: HTMLVideoElement }>()
   private onCalledPeers = new Map<string, { call: Peer.MediaConnection; video: HTMLVideoElement }>()
-  private videoGrid = document.querySelector('.video-grid')
-  private buttonGrid = document.querySelector('.button-grid')
-  private myVideo = document.createElement('video')
+  private videoGrid?: HTMLElement | null
+  private buttonGrid?: HTMLElement | null
+  private myVideo?: HTMLVideoElement
   private myStream?: MediaStream
   private network: Network
 
   constructor(userId: string, network: Network) {
-    const sanitizedId = this.replaceInvalidId(userId)
-    this.myPeer = new Peer(sanitizedId)
     this.network = network
 
-    console.log('userId:', userId)
-    console.log('sanitizedId:', sanitizedId)
+    const sanitizedId = this.replaceInvalidId(userId)
+    this.myPeer = new Peer(sanitizedId)
 
     this.myPeer.on('error', (err) => {
       console.error('PeerJS error:', err)
     })
 
-    this.myVideo.muted = true
-    this.initialize()
+    // Only initialize browser stuff if running in a browser
+    if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+      this.videoGrid = document.querySelector('.video-grid')
+      this.buttonGrid = document.querySelector('.button-grid')
+      this.myVideo = document.createElement('video')
+      this.myVideo.muted = true
 
-    // Optional UI trigger for browsers requiring user gestures
-    this.createStartButton()
+      this.initialize()
+      this.createStartButton()
+    } else {
+      console.log('⚠️ WebRTC initialized in non-browser environment (skipped DOM setup).')
+    }
   }
 
   private replaceInvalidId(userId: string) {
@@ -50,12 +55,14 @@ export default class WebRTC {
     })
   }
 
-  /** 
-   * This method requests microphone + camera permissions.
-   * It must be called after a user gesture (click/tap).
-   */
+  // Request camera/microphone access
   getUserMedia(alertOnError = true) {
-    const isSecure = window.isSecureContext
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices) {
+      console.warn('navigator.mediaDevices not available in this environment.')
+      return
+    }
+
+    const isSecure = typeof window !== 'undefined' && window.isSecureContext
     if (!isSecure) {
       alert('⚠️ Your site must be served over HTTPS for camera/mic to work.')
       return
@@ -64,9 +71,13 @@ export default class WebRTC {
     navigator.mediaDevices
       .getUserMedia({ video: true, audio: true })
       .then((stream) => {
-        console.log('Media stream acquired.')
+        console.log('🎥 Media stream acquired.')
         this.myStream = stream
-        this.addVideoStream(this.myVideo, this.myStream)
+
+        if (this.myVideo) {
+          this.addVideoStream(this.myVideo, this.myStream)
+        }
+
         this.setUpButtons()
         store.dispatch(setVideoConnected(true))
         this.network.videoConnected()
@@ -85,12 +96,12 @@ export default class WebRTC {
       })
   }
 
-  // Method to call a peer
+  // Call another peer
   connectToNewUser(userId: string) {
     if (this.myStream) {
       const sanitizedId = this.replaceInvalidId(userId)
       if (!this.peers.has(sanitizedId)) {
-        console.log('Calling', sanitizedId)
+        console.log('📞 Calling', sanitizedId)
         const call = this.myPeer.call(sanitizedId, this.myStream)
         const video = document.createElement('video')
         this.peers.set(sanitizedId, { call, video })
@@ -104,7 +115,6 @@ export default class WebRTC {
     }
   }
 
-  // Add new video stream to grid
   private addVideoStream(video: HTMLVideoElement, stream: MediaStream) {
     video.srcObject = stream
     video.playsInline = true
@@ -112,7 +122,6 @@ export default class WebRTC {
     if (this.videoGrid) this.videoGrid.append(video)
   }
 
-  // Remove peer video stream (for host)
   deleteVideoStream(userId: string) {
     const sanitizedId = this.replaceInvalidId(userId)
     const peer = this.peers.get(sanitizedId)
@@ -123,7 +132,6 @@ export default class WebRTC {
     }
   }
 
-  // Remove peer video stream (for guest)
   deleteOnCalledVideoStream(userId: string) {
     const sanitizedId = this.replaceInvalidId(userId)
     const onCalledPeer = this.onCalledPeers.get(sanitizedId)
@@ -134,37 +142,31 @@ export default class WebRTC {
     }
   }
 
-  // Create mute/unmute + video on/off buttons
   private setUpButtons() {
-    if (!this.buttonGrid) return
-
-    this.buttonGrid.innerHTML = '' // clear old buttons
+    if (!this.buttonGrid || !this.myStream) return
+    this.buttonGrid.innerHTML = ''
 
     const audioButton = document.createElement('button')
     audioButton.innerText = 'Mute'
     audioButton.addEventListener('click', () => {
-      if (this.myStream) {
-        const audioTrack = this.myStream.getAudioTracks()[0]
-        audioTrack.enabled = !audioTrack.enabled
-        audioButton.innerText = audioTrack.enabled ? 'Mute' : 'Unmute'
-      }
+      const audioTrack = this.myStream!.getAudioTracks()[0]
+      audioTrack.enabled = !audioTrack.enabled
+      audioButton.innerText = audioTrack.enabled ? 'Mute' : 'Unmute'
     })
 
     const videoButton = document.createElement('button')
     videoButton.innerText = 'Video Off'
     videoButton.addEventListener('click', () => {
-      if (this.myStream) {
-        const videoTrack = this.myStream.getVideoTracks()[0]
-        videoTrack.enabled = !videoTrack.enabled
-        videoButton.innerText = videoTrack.enabled ? 'Video Off' : 'Video On'
-      }
+      const videoTrack = this.myStream!.getVideoTracks()[0]
+      videoTrack.enabled = !videoTrack.enabled
+      videoButton.innerText = videoTrack.enabled ? 'Video Off' : 'Video On'
     })
 
     this.buttonGrid.append(audioButton, videoButton)
   }
 
-  // Add a "Start Camera" button for browsers requiring user gesture
   private createStartButton() {
+    if (typeof document === 'undefined') return
     if (!document.querySelector('#start-video')) {
       const button = document.createElement('button')
       button.id = 'start-video'
@@ -172,7 +174,7 @@ export default class WebRTC {
       button.style.margin = '10px'
       button.addEventListener('click', () => {
         this.getUserMedia(true)
-        button.remove() // hide after permission granted
+        button.remove()
       })
       document.body.prepend(button)
     }

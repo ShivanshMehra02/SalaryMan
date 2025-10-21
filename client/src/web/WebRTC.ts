@@ -7,41 +7,33 @@ export default class WebRTC {
   private myPeer: Peer
   private peers = new Map<string, { call: Peer.MediaConnection; video: HTMLVideoElement }>()
   private onCalledPeers = new Map<string, { call: Peer.MediaConnection; video: HTMLVideoElement }>()
-  private videoGrid?: HTMLElement | null
-  private buttonGrid?: HTMLElement | null
-  private myVideo?: HTMLVideoElement
+  private videoGrid = document.querySelector('.video-grid')
+  private buttonGrid = document.querySelector('.button-grid')
+  private myVideo = document.createElement('video')
   private myStream?: MediaStream
   private network: Network
 
   constructor(userId: string, network: Network) {
-    this.network = network
-
     const sanitizedId = this.replaceInvalidId(userId)
     this.myPeer = new Peer(sanitizedId)
+    this.network = network
+    console.log('userId:', userId)
+    console.log('sanitizedId:', sanitizedId)
 
     this.myPeer.on('error', (err) => {
-      console.error('PeerJS error:', err)
+      console.log(err.type)
+      console.error(err)
     })
 
-    // Only initialize browser stuff if running in a browser
-    if (typeof window !== 'undefined' && typeof document !== 'undefined') {
-      this.videoGrid = document.querySelector('.video-grid')
-      this.buttonGrid = document.querySelector('.button-grid')
-      this.myVideo = document.createElement('video')
-      this.myVideo.muted = true
-
-      this.initialize()
-      this.createStartButton()
-    } else {
-      console.log('⚠️ WebRTC initialized in non-browser environment (skipped DOM setup).')
-    }
+    this.myVideo.muted = true
+    this.initialize()
   }
 
   private replaceInvalidId(userId: string) {
     return userId.replace(/[^0-9a-z]/gi, 'G')
   }
 
-  private initialize() {
+  initialize() {
     this.myPeer.on('call', (call) => {
       if (!this.onCalledPeers.has(call.peer)) {
         call.answer(this.myStream)
@@ -55,53 +47,64 @@ export default class WebRTC {
     })
   }
 
-  // Request camera/microphone access
-  getUserMedia(alertOnError = true) {
-    if (typeof navigator === 'undefined' || !navigator.mediaDevices) {
-      console.warn('navigator.mediaDevices not available in this environment.')
-      return
-    }
+  // ✅ Safe permission check (works on all browsers)
+  async checkPreviousPermission() {
+    try {
+      // Not all browsers support querying microphone/camera directly
+      if (navigator.permissions) {
+        const results = await Promise.allSettled([
+          navigator.permissions.query({ name: 'camera' as PermissionName }),
+          navigator.permissions.query({ name: 'microphone' as PermissionName })
+        ])
 
-    const isSecure = typeof window !== 'undefined' && window.isSecureContext
-    if (!isSecure) {
-      alert('⚠️ Your site must be served over HTTPS for camera/mic to work.')
-      return
-    }
+        const granted = results.some(
+          (r) =>
+            r.status === 'fulfilled' &&
+            (r.value as PermissionStatus).state === 'granted'
+        )
 
-    navigator.mediaDevices
-      .getUserMedia({ video: true, audio: true })
-      .then((stream) => {
-        console.log('🎥 Media stream acquired.')
-        this.myStream = stream
-
-        if (this.myVideo) {
-          this.addVideoStream(this.myVideo, this.myStream)
+        if (granted) {
+          this.getUserMedia(false)
+          return
         }
+      }
 
+      // Fallback: if permissions API unsupported
+      console.log('Permissions API not fully supported, requesting directly...')
+      this.getUserMedia(false)
+    } catch (err) {
+      console.warn('Permission check failed:', err)
+      this.getUserMedia(false)
+    }
+  }
+
+  getUserMedia(alertOnError = true) {
+    navigator.mediaDevices
+      ?.getUserMedia({
+        video: true,
+        audio: true,
+      })
+      .then((stream) => {
+        this.myStream = stream
+        this.addVideoStream(this.myVideo, this.myStream)
         this.setUpButtons()
         store.dispatch(setVideoConnected(true))
         this.network.videoConnected()
       })
       .catch((error) => {
         console.error('getUserMedia error:', error)
-        if (alertOnError) {
-          if (error.name === 'NotAllowedError') {
-            window.alert('Please allow access to your camera and microphone.')
-          } else if (error.name === 'NotFoundError') {
-            window.alert('No camera or microphone found.')
-          } else {
-            window.alert('No webcam or microphone found, or permission is blocked.')
-          }
-        }
+        if (alertOnError)
+          window.alert(
+            'No webcam or microphone found, or permission is blocked.'
+          )
       })
   }
 
-  // Call another peer
   connectToNewUser(userId: string) {
     if (this.myStream) {
       const sanitizedId = this.replaceInvalidId(userId)
       if (!this.peers.has(sanitizedId)) {
-        console.log('📞 Calling', sanitizedId)
+        console.log('calling', sanitizedId)
         const call = this.myPeer.call(sanitizedId, this.myStream)
         const video = document.createElement('video')
         this.peers.set(sanitizedId, { call, video })
@@ -110,73 +113,70 @@ export default class WebRTC {
           this.addVideoStream(video, userVideoStream)
         })
       }
-    } else {
-      console.warn('Attempted to call before media stream was ready.')
     }
   }
 
-  private addVideoStream(video: HTMLVideoElement, stream: MediaStream) {
+  addVideoStream(video: HTMLVideoElement, stream: MediaStream) {
     video.srcObject = stream
     video.playsInline = true
-    video.addEventListener('loadedmetadata', () => video.play())
+    video.addEventListener('loadedmetadata', () => {
+      video.play().catch(() => console.warn('Video autoplay blocked'))
+    })
     if (this.videoGrid) this.videoGrid.append(video)
   }
 
   deleteVideoStream(userId: string) {
     const sanitizedId = this.replaceInvalidId(userId)
-    const peer = this.peers.get(sanitizedId)
-    if (peer) {
-      peer.call.close()
-      peer.video.remove()
+    if (this.peers.has(sanitizedId)) {
+      const peer = this.peers.get(sanitizedId)
+      peer?.call.close()
+      peer?.video.remove()
       this.peers.delete(sanitizedId)
     }
   }
 
   deleteOnCalledVideoStream(userId: string) {
     const sanitizedId = this.replaceInvalidId(userId)
-    const onCalledPeer = this.onCalledPeers.get(sanitizedId)
-    if (onCalledPeer) {
-      onCalledPeer.call.close()
-      onCalledPeer.video.remove()
+    if (this.onCalledPeers.has(sanitizedId)) {
+      const onCalledPeer = this.onCalledPeers.get(sanitizedId)
+      onCalledPeer?.call.close()
+      onCalledPeer?.video.remove()
       this.onCalledPeers.delete(sanitizedId)
     }
   }
 
-  private setUpButtons() {
-    if (!this.buttonGrid || !this.myStream) return
-    this.buttonGrid.innerHTML = ''
-
+  setUpButtons() {
     const audioButton = document.createElement('button')
     audioButton.innerText = 'Mute'
     audioButton.addEventListener('click', () => {
-      const audioTrack = this.myStream!.getAudioTracks()[0]
-      audioTrack.enabled = !audioTrack.enabled
-      audioButton.innerText = audioTrack.enabled ? 'Mute' : 'Unmute'
+      if (this.myStream) {
+        const audioTrack = this.myStream.getAudioTracks()[0]
+        if (audioTrack.enabled) {
+          audioTrack.enabled = false
+          audioButton.innerText = 'Unmute'
+        } else {
+          audioTrack.enabled = true
+          audioButton.innerText = 'Mute'
+        }
+      }
     })
 
     const videoButton = document.createElement('button')
-    videoButton.innerText = 'Video Off'
+    videoButton.innerText = 'Video off'
     videoButton.addEventListener('click', () => {
-      const videoTrack = this.myStream!.getVideoTracks()[0]
-      videoTrack.enabled = !videoTrack.enabled
-      videoButton.innerText = videoTrack.enabled ? 'Video Off' : 'Video On'
+      if (this.myStream) {
+        const videoTrack = this.myStream.getVideoTracks()[0]
+        if (videoTrack.enabled) {
+          videoTrack.enabled = false
+          videoButton.innerText = 'Video on'
+        } else {
+          videoTrack.enabled = true
+          videoButton.innerText = 'Video off'
+        }
+      }
     })
 
-    this.buttonGrid.append(audioButton, videoButton)
-  }
-
-  private createStartButton() {
-    if (typeof document === 'undefined') return
-    if (!document.querySelector('#start-video')) {
-      const button = document.createElement('button')
-      button.id = 'start-video'
-      button.innerText = '🎥 Start Camera'
-      button.style.margin = '10px'
-      button.addEventListener('click', () => {
-        this.getUserMedia(true)
-        button.remove()
-      })
-      document.body.prepend(button)
-    }
+    this.buttonGrid?.append(audioButton)
+    this.buttonGrid?.append(videoButton)
   }
 }

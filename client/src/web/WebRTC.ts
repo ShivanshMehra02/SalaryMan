@@ -15,13 +15,7 @@ export default class WebRTC {
 
   constructor(userId: string, network: Network) {
     const sanitizedId = this.replaceInvalidId(userId)
-    
-    // PeerJS configuration with self-hosted server for Netlify deployment
     this.myPeer = new Peer(sanitizedId, {
-      host: process.env.REACT_APP_PEERJS_HOST || 'localhost',
-      port: parseInt(process.env.REACT_APP_PEERJS_PORT || '9000'),
-      path: '/peerjs',
-      secure: true, // Important for Netlify (HTTPS)
       config: {
         iceServers: [
           { urls: ['stun:stun.l.google.com:19302'] },
@@ -30,23 +24,25 @@ export default class WebRTC {
         ]
       }
     })
-    
     this.network = network
     console.log('userId:', userId)
     console.log('sanitizedId:', sanitizedId)
-    
     this.myPeer.on('error', (err) => {
-      console.log('PeerJS Error Type:', err.type)
-      console.error('PeerJS Error:', err)
+      console.log(err.type)
+      console.error(err)
     })
 
+    // mute your own video stream (you don't want to hear yourself)
     this.myVideo.muted = true
-    this.myVideo.playsInline = true
     this.myVideo.autoplay = true
+    this.myVideo.playsInline = true
 
+    // config peerJS
     this.initialize()
   }
 
+  // PeerJS throws invalid_id error if it contains some characters such as that colyseus generates.
+  // https://peerjs.com/docs.html#peer-id
   private replaceInvalidId(userId: string) {
     return userId.replace(/[^0-9a-z]/gi, 'G')
   }
@@ -54,39 +50,21 @@ export default class WebRTC {
   initialize() {
     this.myPeer.on('call', (call) => {
       if (!this.onCalledPeers.has(call.peer)) {
-        // Ensure myStream exists before answering
-        if (!this.myStream) {
-          console.warn('Received call but myStream is not initialized')
-          call.close()
-          return
-        }
-        
         call.answer(this.myStream)
         const video = document.createElement('video')
         video.autoplay = true
         video.playsInline = true
-        
         this.onCalledPeers.set(call.peer, { call, video })
 
         call.on('stream', (userVideoStream) => {
           this.addVideoStream(video, userVideoStream)
         })
-        
-        call.on('error', (err) => {
-          console.error('Call error from peer:', call.peer, err)
-        })
-        
-        call.on('close', () => {
-          console.log('Call closed with peer:', call.peer)
-        })
       }
-    })
-    
-    this.myPeer.on('open', (id) => {
-      console.log('PeerJS connection opened with ID:', id)
+      // on close is triggered manually with deleteOnCalledVideoStream()
     })
   }
 
+  // check if permission has been granted before
   checkPreviousPermission() {
     const permissionName = 'microphone' as PermissionName
     navigator.permissions?.query({ name: permissionName }).then((result) => {
@@ -95,93 +73,57 @@ export default class WebRTC {
   }
 
   getUserMedia(alertOnError = true) {
-    const constraints = {
-      video: {
-        width: { ideal: 1280 },
-        height: { ideal: 720 }
-      },
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true
-      }
-    }
-
+    // ask the browser to get user media
     navigator.mediaDevices
-      ?.getUserMedia(constraints)
+      ?.getUserMedia({
+        video: true,
+        audio: true,
+      })
       .then((stream) => {
         this.myStream = stream
         this.addVideoStream(this.myVideo, this.myStream)
         this.setUpButtons()
         store.dispatch(setVideoConnected(true))
         this.network.videoConnected()
-        console.log('Media stream initialized successfully')
       })
       .catch((error) => {
-        console.error('getUserMedia error:', error)
-        if (alertOnError) {
-          window.alert(
-            `Failed to access media devices: ${error.name} - ${error.message}. ` +
-            'Please check your browser permissions and device settings.'
-          )
-        }
+        if (alertOnError) window.alert('No webcam or microphone found, or permission is blocked')
       })
   }
 
+  // method to call a peer
   connectToNewUser(userId: string) {
-    if (!this.myStream) {
-      console.warn('Cannot connect to new user: myStream is not initialized')
-      return
-    }
-
-    const sanitizedId = this.replaceInvalidId(userId)
-    if (!this.peers.has(sanitizedId)) {
-      console.log('Calling peer:', sanitizedId)
-      try {
+    if (this.myStream) {
+      const sanitizedId = this.replaceInvalidId(userId)
+      if (!this.peers.has(sanitizedId)) {
+        console.log('calling', sanitizedId)
         const call = this.myPeer.call(sanitizedId, this.myStream)
         const video = document.createElement('video')
         video.autoplay = true
         video.playsInline = true
-        
         this.peers.set(sanitizedId, { call, video })
 
         call.on('stream', (userVideoStream) => {
           this.addVideoStream(video, userVideoStream)
         })
-        
-        call.on('error', (err) => {
-          console.error('Call error to peer:', sanitizedId, err)
-        })
-        
-        call.on('close', () => {
-          console.log('Call closed to peer:', sanitizedId)
-          this.deleteVideoStream(userId)
-        })
-      } catch (error) {
-        console.error('Error initiating call:', error)
+
+        // on close is triggered manually with deleteVideoStream()
       }
     }
   }
 
+  // method to add new video stream to videoGrid div
   addVideoStream(video: HTMLVideoElement, stream: MediaStream) {
     video.srcObject = stream
     video.playsInline = true
     video.autoplay = true
-    
     video.addEventListener('loadedmetadata', () => {
-      console.log('Video metadata loaded')
-      video.play().catch((err) => {
-        console.error('Error playing video:', err)
-      })
+      video.play().catch((err) => console.error('Play error:', err))
     })
-    
-    video.addEventListener('error', (err) => {
-      console.error('Video element error:', err)
-    })
-    
     if (this.videoGrid) this.videoGrid.append(video)
   }
 
+  // method to remove video stream (when we are the host of the call)
   deleteVideoStream(userId: string) {
     const sanitizedId = this.replaceInvalidId(userId)
     if (this.peers.has(sanitizedId)) {
@@ -189,10 +131,10 @@ export default class WebRTC {
       peer?.call.close()
       peer?.video.remove()
       this.peers.delete(sanitizedId)
-      console.log('Deleted video stream for peer:', sanitizedId)
     }
   }
 
+  // method to remove video stream (when we are the guest of the call)
   deleteOnCalledVideoStream(userId: string) {
     const sanitizedId = this.replaceInvalidId(userId)
     if (this.onCalledPeers.has(sanitizedId)) {
@@ -200,35 +142,39 @@ export default class WebRTC {
       onCalledPeer?.call.close()
       onCalledPeer?.video.remove()
       this.onCalledPeers.delete(sanitizedId)
-      console.log('Deleted on-called video stream for peer:', sanitizedId)
     }
   }
 
+  // method to set up mute/unmute and video on/off buttons
   setUpButtons() {
     const audioButton = document.createElement('button')
     audioButton.innerText = 'Mute'
     audioButton.addEventListener('click', () => {
       if (this.myStream) {
         const audioTrack = this.myStream.getAudioTracks()[0]
-        if (audioTrack) {
-          audioTrack.enabled = !audioTrack.enabled
-          audioButton.innerText = audioTrack.enabled ? 'Mute' : 'Unmute'
+        if (audioTrack.enabled) {
+          audioTrack.enabled = false
+          audioButton.innerText = 'Unmute'
+        } else {
+          audioTrack.enabled = true
+          audioButton.innerText = 'Mute'
         }
       }
     })
-
     const videoButton = document.createElement('button')
     videoButton.innerText = 'Video off'
     videoButton.addEventListener('click', () => {
       if (this.myStream) {
         const videoTrack = this.myStream.getVideoTracks()[0]
-        if (videoTrack) {
-          videoTrack.enabled = !videoTrack.enabled
-          videoButton.innerText = videoTrack.enabled ? 'Video off' : 'Video on'
+        if (videoTrack.enabled) {
+          videoTrack.enabled = false
+          videoButton.innerText = 'Video on'
+        } else {
+          videoTrack.enabled = true
+          videoButton.innerText = 'Video off'
         }
       }
     })
-
     this.buttonGrid?.append(audioButton)
     this.buttonGrid?.append(videoButton)
   }

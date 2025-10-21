@@ -24,13 +24,17 @@ export default class WebRTC {
       console.error(err)
     })
 
+    // mute your own video stream (you don't want to hear yourself)
     this.myVideo.muted = true
     this.myVideo.autoplay = true
     this.myVideo.playsInline = true
 
+    // config peerJS
     this.initialize()
   }
 
+  // PeerJS throws invalid_id error if it contains some characters such as that colyseus generates.
+  // https://peerjs.com/docs.html#peer-id
   private replaceInvalidId(userId: string) {
     return userId.replace(/[^0-9a-z]/gi, 'G')
   }
@@ -48,17 +52,16 @@ export default class WebRTC {
           this.addVideoStream(video, userVideoStream)
         })
       }
+      // on close is triggered manually with deleteOnCalledVideoStream()
     })
   }
 
   checkPreviousPermission() {
-    const permissionName = 'microphone' as PermissionName
-    navigator.permissions?.query({ name: permissionName }).then((result) => {
-      if (result.state === 'granted') this.getUserMedia(false)
-    })
+    this.getUserMedia(false)
   }
 
   getUserMedia(alertOnError = true) {
+    // ask the browser to get user media
     navigator.mediaDevices
       ?.getUserMedia({
         video: true,
@@ -76,6 +79,7 @@ export default class WebRTC {
       })
   }
 
+  // method to call a peer
   connectToNewUser(userId: string) {
     if (this.myStream) {
       const sanitizedId = this.replaceInvalidId(userId)
@@ -90,20 +94,24 @@ export default class WebRTC {
         call.on('stream', (userVideoStream) => {
           this.addVideoStream(video, userVideoStream)
         })
+
+        // on close is triggered manually with deleteVideoStream()
       }
     }
   }
 
+  // method to add new video stream to videoGrid div
   addVideoStream(video: HTMLVideoElement, stream: MediaStream) {
     video.srcObject = stream
     video.playsInline = true
     video.autoplay = true
     video.addEventListener('loadedmetadata', () => {
-      video.play().catch((err) => console.error('Play error:', err))
+      video.play()
     })
     if (this.videoGrid) this.videoGrid.append(video)
   }
 
+  // method to remove video stream (when we are the host of the call)
   deleteVideoStream(userId: string) {
     const sanitizedId = this.replaceInvalidId(userId)
     if (this.peers.has(sanitizedId)) {
@@ -114,6 +122,7 @@ export default class WebRTC {
     }
   }
 
+  // method to remove video stream (when we are the guest of the call)
   deleteOnCalledVideoStream(userId: string) {
     const sanitizedId = this.replaceInvalidId(userId)
     if (this.onCalledPeers.has(sanitizedId)) {
@@ -124,6 +133,7 @@ export default class WebRTC {
     }
   }
 
+  // method to set up mute/unmute and video on/off buttons
   setUpButtons() {
     const audioButton = document.createElement('button')
     audioButton.innerText = 'Mute'

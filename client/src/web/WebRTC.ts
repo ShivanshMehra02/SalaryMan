@@ -15,8 +15,6 @@ export default class WebRTC {
 
   constructor(userId: string, network: Network) {
     const sanitizedId = this.replaceInvalidId(userId)
-    
-    // Enhanced PeerJS config for cross-browser compatibility
     this.myPeer = new Peer(sanitizedId, {
       config: {
         iceServers: [
@@ -28,20 +26,17 @@ export default class WebRTC {
         ]
       }
     })
-    
     this.network = network
     console.log('userId:', userId)
     console.log('sanitizedId:', sanitizedId)
-    
     this.myPeer.on('error', (err) => {
-      console.log('PeerJS Error:', err.type)
+      console.log(err.type)
       console.error(err)
     })
 
     this.myVideo.muted = true
     this.myVideo.autoplay = true
     this.myVideo.playsInline = true
-    this.myVideo.setAttribute('playsinline', 'true')
 
     this.initialize()
   }
@@ -53,32 +48,16 @@ export default class WebRTC {
   initialize() {
     this.myPeer.on('call', (call) => {
       if (!this.onCalledPeers.has(call.peer)) {
-        if (!this.myStream) {
-          console.warn('No stream available to answer call')
-          call.close()
-          return
-        }
-
         call.answer(this.myStream)
         const video = document.createElement('video')
         video.autoplay = true
         video.playsInline = true
-        video.setAttribute('playsinline', 'true')
-        
         this.onCalledPeers.set(call.peer, { call, video })
 
         call.on('stream', (userVideoStream) => {
           this.addVideoStream(video, userVideoStream)
         })
-
-        call.on('error', (err) => {
-          console.error('Call error:', err)
-        })
       }
-    })
-
-    this.myPeer.on('open', (id) => {
-      console.log('PeerJS opened with ID:', id)
     })
   }
 
@@ -90,95 +69,37 @@ export default class WebRTC {
   }
 
   getUserMedia(alertOnError = true) {
-    const constraints: any = {
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true
-      }
-    }
-
-    // Try with video first, fallback to audio only
-    constraints.video = {
-      width: { ideal: 1280 },
-      height: { ideal: 720 }
-    }
-
     navigator.mediaDevices
-      ?.getUserMedia(constraints)
+      ?.getUserMedia({
+        video: true,
+        audio: true,
+      })
       .then((stream) => {
         this.myStream = stream
         this.addVideoStream(this.myVideo, this.myStream)
         this.setUpButtons()
         store.dispatch(setVideoConnected(true))
         this.network.videoConnected()
-        console.log('Media stream initialized with video and audio')
       })
       .catch((error) => {
-        console.warn('getUserMedia with video failed, trying audio only:', error)
-        
-        // Fallback: try audio only
-        navigator.mediaDevices
-          ?.getUserMedia({
-            video: false,
-            audio: {
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl: true
-            }
-          })
-          .then((stream) => {
-            this.myStream = stream
-            this.addVideoStream(this.myVideo, this.myStream)
-            this.setUpButtons()
-            store.dispatch(setVideoConnected(true))
-            this.network.videoConnected()
-            console.log('Media stream initialized with audio only')
-          })
-          .catch((audioError) => {
-            console.error('Failed to get audio:', audioError)
-            if (alertOnError) {
-              window.alert(
-                'Unable to access microphone or camera. Please check your browser permissions and device.'
-              )
-            }
-          })
+        if (alertOnError) window.alert('No webcam or microphone found, or permission is blocked')
       })
   }
 
   connectToNewUser(userId: string) {
-    if (!this.myStream) {
-      console.warn('myStream not initialized')
-      return
-    }
-
-    const sanitizedId = this.replaceInvalidId(userId)
-    if (!this.peers.has(sanitizedId)) {
-      console.log('Calling user:', sanitizedId)
-      try {
+    if (this.myStream) {
+      const sanitizedId = this.replaceInvalidId(userId)
+      if (!this.peers.has(sanitizedId)) {
+        console.log('calling', sanitizedId)
         const call = this.myPeer.call(sanitizedId, this.myStream)
         const video = document.createElement('video')
         video.autoplay = true
         video.playsInline = true
-        video.setAttribute('playsinline', 'true')
-        
         this.peers.set(sanitizedId, { call, video })
 
         call.on('stream', (userVideoStream) => {
           this.addVideoStream(video, userVideoStream)
         })
-
-        call.on('error', (err) => {
-          console.error('Call error:', err)
-          this.deleteVideoStream(userId)
-        })
-
-        call.on('close', () => {
-          console.log('Call closed')
-          this.deleteVideoStream(userId)
-        })
-      } catch (error) {
-        console.error('Error calling user:', error)
       }
     }
   }
@@ -187,19 +108,9 @@ export default class WebRTC {
     video.srcObject = stream
     video.playsInline = true
     video.autoplay = true
-    video.setAttribute('playsinline', 'true')
-    
-    const playPromise = video.play()
-    if (playPromise !== undefined) {
-      playPromise
-        .then(() => {
-          console.log('Video playing successfully')
-        })
-        .catch((error) => {
-          console.error('Video play error:', error)
-        })
-    }
-
+    video.addEventListener('loadedmetadata', () => {
+      video.play().catch((err) => console.error('Play error:', err))
+    })
     if (this.videoGrid) this.videoGrid.append(video)
   }
 
@@ -229,25 +140,29 @@ export default class WebRTC {
     audioButton.addEventListener('click', () => {
       if (this.myStream) {
         const audioTrack = this.myStream.getAudioTracks()[0]
-        if (audioTrack) {
-          audioTrack.enabled = !audioTrack.enabled
-          audioButton.innerText = audioTrack.enabled ? 'Mute' : 'Unmute'
+        if (audioTrack.enabled) {
+          audioTrack.enabled = false
+          audioButton.innerText = 'Unmute'
+        } else {
+          audioTrack.enabled = true
+          audioButton.innerText = 'Mute'
         }
       }
     })
-
     const videoButton = document.createElement('button')
     videoButton.innerText = 'Video off'
     videoButton.addEventListener('click', () => {
       if (this.myStream) {
         const videoTrack = this.myStream.getVideoTracks()[0]
-        if (videoTrack) {
-          videoTrack.enabled = !videoTrack.enabled
-          videoButton.innerText = videoTrack.enabled ? 'Video off' : 'Video on'
+        if (videoTrack.enabled) {
+          videoTrack.enabled = false
+          videoButton.innerText = 'Video on'
+        } else {
+          videoTrack.enabled = true
+          videoButton.innerText = 'Video off'
         }
       }
     })
-
     this.buttonGrid?.append(audioButton)
     this.buttonGrid?.append(videoButton)
   }

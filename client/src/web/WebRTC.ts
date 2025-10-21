@@ -52,12 +52,11 @@ export default class WebRTC {
     })
   }
 
-  // check if permission has been granted before
+  // ✅ simplified & safe fix
   checkPreviousPermission() {
-    const permissionName = 'microphone' as PermissionName
-    navigator.permissions?.query({ name: permissionName }).then((result) => {
-      if (result.state === 'granted') this.getUserMedia(false)
-    })
+    // Instead of querying permissions (which throws in some browsers),
+    // directly attempt to getUserMedia; browser will auto-handle permission state
+    this.getUserMedia(false)
   }
 
   getUserMedia(alertOnError = true) {
@@ -146,20 +145,22 @@ export default class WebRTC {
         }
       }
     })
+
     const videoButton = document.createElement('button')
     videoButton.innerText = 'Video off'
     videoButton.addEventListener('click', () => {
       if (this.myStream) {
-        const audioTrack = this.myStream.getVideoTracks()[0]
-        if (audioTrack.enabled) {
-          audioTrack.enabled = false
+        const videoTrack = this.myStream.getVideoTracks()[0]
+        if (videoTrack.enabled) {
+          videoTrack.enabled = false
           videoButton.innerText = 'Video on'
         } else {
-          audioTrack.enabled = true
+          videoTrack.enabled = true
           videoButton.innerText = 'Video off'
         }
       }
     })
+
     this.buttonGrid?.append(audioButton)
     this.buttonGrid?.append(videoButton)
   }

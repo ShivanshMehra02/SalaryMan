@@ -27,7 +27,6 @@ export default class WebRTC {
     // mute your own video stream (you don't want to hear yourself)
     this.myVideo.muted = true
     this.myVideo.autoplay = true
-    this.myVideo.playsInline = true
 
     // config peerJS
     this.initialize()
@@ -45,7 +44,6 @@ export default class WebRTC {
         call.answer(this.myStream)
         const video = document.createElement('video')
         video.autoplay = true
-        video.playsInline = true
         this.onCalledPeers.set(call.peer, { call, video })
 
         call.on('stream', (userVideoStream) => {
@@ -56,8 +54,12 @@ export default class WebRTC {
     })
   }
 
+  // check if permission has been granted before
   checkPreviousPermission() {
-    this.getUserMedia(false)
+    const permissionName = 'microphone' as PermissionName
+    navigator.permissions?.query({ name: permissionName }).then((result) => {
+      if (result.state === 'granted') this.getUserMedia(false)
+    })
   }
 
   getUserMedia(alertOnError = true) {
@@ -88,7 +90,6 @@ export default class WebRTC {
         const call = this.myPeer.call(sanitizedId, this.myStream)
         const video = document.createElement('video')
         video.autoplay = true
-        video.playsInline = true
         this.peers.set(sanitizedId, { call, video })
 
         call.on('stream', (userVideoStream) => {
@@ -153,12 +154,12 @@ export default class WebRTC {
     videoButton.innerText = 'Video off'
     videoButton.addEventListener('click', () => {
       if (this.myStream) {
-        const videoTrack = this.myStream.getVideoTracks()[0]
-        if (videoTrack.enabled) {
-          videoTrack.enabled = false
+        const audioTrack = this.myStream.getVideoTracks()[0]
+        if (audioTrack.enabled) {
+          audioTrack.enabled = false
           videoButton.innerText = 'Video on'
         } else {
-          videoTrack.enabled = true
+          audioTrack.enabled = true
           videoButton.innerText = 'Video off'
         }
       }

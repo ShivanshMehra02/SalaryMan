@@ -15,17 +15,7 @@ export default class WebRTC {
 
   constructor(userId: string, network: Network) {
     const sanitizedId = this.replaceInvalidId(userId)
-    this.myPeer = new Peer(sanitizedId, {
-      config: {
-        iceServers: [
-          { urls: ['stun:stun.l.google.com:19302'] },
-          { urls: ['stun:stun1.l.google.com:19302'] },
-          { urls: ['stun2.l.google.com:19302'] },
-          { urls: ['stun:stun3.l.google.com:19302'] },
-          { urls: ['stun:stun4.l.google.com:19302'] }
-        ]
-      }
-    })
+    this.myPeer = new Peer(sanitizedId)
     this.network = network
     console.log('userId:', userId)
     console.log('sanitizedId:', sanitizedId)
